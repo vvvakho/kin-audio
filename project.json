@@ -1,7 +1,7 @@
 {
   "name": "Kin Audio",
   "mission": "Open, content-preserving neural audio re-instrumentation: the musician authors the performance; the model changes its body.",
-  "current_focus": "Ingest a leakage-safe StarNet subset and establish real-audio baselines.",
+  "current_focus": "Train a paired polyphonic audio-to-audio baseline on leakage-safe StarNet splits; monophonic examples remain part of the same model's training distribution.",
   "principles": [
     "Preservation claims require held-out measurements and listening examples.",
     "Code, data, and model weights carry independent explicit licenses.",
@@ -20,14 +20,14 @@
       "evidence": "StarNet is the first paired benchmark; its CC BY 4.0 provenance and composition-level split are registered."
     },
     {
-      "name": "Niche target body",
-      "status": "queued",
-      "evidence": "First intended release is monophonic performance to a choir-like learned body."
+      "name": "Polyphonic paired baseline",
+      "status": "active",
+      "evidence": "The main model path consumes source audio directly and must support chords, overlapping notes, and monophonic phrases without separate model families."
     },
     {
-      "name": "Polyphonic transfer",
-      "status": "research",
-      "evidence": "Paired MIDI rendering and WaveTransfer provide the initial path."
+      "name": "Target-body conditioning",
+      "status": "queued",
+      "evidence": "After the paired baseline is credible, one model will condition on multiple target instruments and textures."
     }
   ]
 }

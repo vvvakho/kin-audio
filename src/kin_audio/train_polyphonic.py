@@ -1,7 +1,7 @@
 import json
 import random
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -10,38 +10,20 @@ from torch import nn
 from torch.utils.data import DataLoader, Subset, random_split
 
 from .audio import save_audio
-from .data import PerformanceDataset
-from .model import HarmonicRenderer, RendererConfig, multi_resolution_stft_loss
+from .data import PairedAudioDataset
+from .model import multi_resolution_stft_loss
+from .polyphonic import PolyphonicConfig, PolyphonicSpectralUNet
+from .train import TrainConfig, resolve_device
 
 
-@dataclass(frozen=True)
-class TrainConfig:
-    epochs: int = 8
-    batch_size: int = 4
-    learning_rate: float = 3e-4
-    validation_fraction: float = 0.2
-    seed: int = 20261006
-    device: str = "auto"
-
-
-def resolve_device(requested: str) -> torch.device:
-    if requested != "auto":
-        return torch.device(requested)
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
-
-
-def train_model(
+def train_polyphonic_model(
     manifest: str | Path,
     output_dir: str | Path,
     *,
-    renderer_config: RendererConfig | None = None,
+    model_config: PolyphonicConfig | None = None,
     train_config: TrainConfig | None = None,
 ) -> dict[str, object]:
-    renderer_config = renderer_config or RendererConfig()
+    model_config = model_config or PolyphonicConfig()
     train_config = train_config or TrainConfig()
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -50,7 +32,7 @@ def train_model(
     np.random.seed(train_config.seed)
     torch.manual_seed(train_config.seed)
 
-    dataset = PerformanceDataset(manifest)
+    dataset = PairedAudioDataset(manifest)
     validation_size = max(1, round(len(dataset) * train_config.validation_fraction))
     training_size = len(dataset) - validation_size
     if training_size < 1:
@@ -74,14 +56,14 @@ def train_model(
     )
 
     device = resolve_device(train_config.device)
-    model = HarmonicRenderer(renderer_config).to(device)
+    model = PolyphonicSpectralUNet(model_config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=train_config.learning_rate)
     best_validation = float("inf")
     metrics_path = output / "metrics.jsonl"
     started = time.time()
-
     configuration = {
-        "renderer": asdict(renderer_config),
+        "model_type": "polyphonic-spectral-unet",
+        "model": asdict(model_config),
         "training": asdict(train_config),
         "manifest": str(Path(manifest).resolve()),
         "training_examples": training_size,
@@ -107,10 +89,11 @@ def train_model(
             torch.save(model.checkpoint(), output / "checkpoint.pt")
 
     checkpoint = torch.load(output / "checkpoint.pt", map_location=device, weights_only=True)
-    best_model = HarmonicRenderer.from_checkpoint(checkpoint).to(device).eval()
+    best_model = PolyphonicSpectralUNet.from_checkpoint(checkpoint).to(device).eval()
     comparison = _render_validation_example(best_model, validation_set, device, output)
     summary: dict[str, object] = {
         "status": "completed",
+        "model_type": "polyphonic-spectral-unet",
         "best_validation_loss": best_validation,
         "epochs": train_config.epochs,
         "duration_seconds": time.time() - started,
@@ -124,7 +107,7 @@ def train_model(
 
 
 def _run_epoch(
-    model: HarmonicRenderer,
+    model: PolyphonicSpectralUNet,
     loader: DataLoader[dict[str, torch.Tensor]],
     device: torch.device,
     optimizer: torch.optim.Optimizer | None,
@@ -136,11 +119,9 @@ def _run_epoch(
     context = torch.enable_grad if training else torch.no_grad
     with context():
         for batch in loader:
-            f0 = batch["f0_hz"].to(device)
-            loudness = batch["loudness"].to(device)
-            voiced = batch["voiced"].to(device)
+            source = batch["source"].to(device)
             target = batch["target"].to(device)
-            prediction = model(f0, loudness, voiced, target.shape[1])
+            prediction = model(source)
             spectral = multi_resolution_stft_loss(prediction, target)
             waveform = nn.functional.l1_loss(prediction, target)
             loss = spectral + 0.5 * waveform
@@ -156,19 +137,14 @@ def _run_epoch(
 
 
 def _render_validation_example(
-    model: HarmonicRenderer,
+    model: PolyphonicSpectralUNet,
     validation_set: Subset,
     device: torch.device,
     output: Path,
 ) -> dict[str, str]:
     item = validation_set[0]
     with torch.no_grad():
-        prediction = model(
-            item["f0_hz"].unsqueeze(0).to(device),
-            item["loudness"].unsqueeze(0).to(device),
-            item["voiced"].unsqueeze(0).to(device),
-            item["target"].numel(),
-        )[0]
+        prediction = model(item["source"].unsqueeze(0).to(device))[0]
     source_path = output / "validation_source.wav"
     prediction_path = output / "validation_prediction.wav"
     target_path = output / "validation_target.wav"
@@ -176,7 +152,7 @@ def _render_validation_example(
     save_audio(prediction_path, prediction.cpu().numpy(), model.config.sample_rate)
     save_audio(target_path, item["target"].numpy(), model.config.sample_rate)
     comparison = {
-        "name": "Held-out synthetic target reconstruction",
+        "name": "Held-out paired polyphonic transfer",
         "source": source_path.name,
         "prediction": prediction_path.name,
         "target": target_path.name,

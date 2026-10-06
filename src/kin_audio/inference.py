@@ -7,6 +7,7 @@ import torch
 from .audio import load_audio, save_audio
 from .features import extract_performance
 from .model import HarmonicRenderer
+from .polyphonic import PolyphonicSpectralUNet
 from .train import resolve_device
 
 
@@ -33,6 +34,24 @@ def render_file(
             torch.from_numpy(performance.voiced).unsqueeze(0).to(device),
             len(audio),
         )[0]
+    output = Path(output_path)
+    save_audio(output, prediction.cpu().numpy(), model.config.sample_rate)
+    return output
+
+
+def render_polyphonic_file(
+    checkpoint_path: str | Path,
+    input_path: str | Path,
+    output_path: str | Path,
+    *,
+    device_name: str = "auto",
+) -> Path:
+    device = resolve_device(device_name)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    model = PolyphonicSpectralUNet.from_checkpoint(checkpoint).to(device).eval()
+    audio = load_audio(input_path, model.config.sample_rate)
+    with torch.no_grad():
+        prediction = model(torch.from_numpy(audio).unsqueeze(0).to(device))[0]
     output = Path(output_path)
     save_audio(output, prediction.cpu().numpy(), model.config.sample_rate)
     return output

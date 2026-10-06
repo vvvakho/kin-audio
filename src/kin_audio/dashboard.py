@@ -50,7 +50,12 @@ def _scan_runs(root: Path) -> tuple[list[list[Any]], list[str]]:
     runs_root = root / "runs"
     if not runs_root.exists():
         return rows, names
-    for summary_path in sorted(runs_root.glob("*/summary.json"), reverse=True):
+    summaries = sorted(
+        runs_root.glob("*/summary.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for summary_path in summaries:
         run_name = summary_path.parent.name
         summary = json.loads(summary_path.read_text())
         rows.append(
@@ -67,14 +72,17 @@ def _scan_runs(root: Path) -> tuple[list[list[Any]], list[str]]:
     return rows, names
 
 
-def _run_artifacts(root: Path, run_name: str | None) -> tuple[str, str | None, str | None]:
+def _run_artifacts(
+    root: Path,
+    run_name: str | None,
+) -> tuple[str, str | None, str | None, str | None]:
     if not run_name:
-        return "No completed run selected.", None, None
+        return "No completed run selected.", None, None, None
     run = root / "runs" / run_name
     summary_path = run / "summary.json"
     comparison_path = run / "comparison.json"
     if not summary_path.exists() or not comparison_path.exists():
-        return "The selected run has no complete listening artifact.", None, None
+        return "The selected run has no complete listening artifact.", None, None, None
     summary = json.loads(summary_path.read_text())
     comparison = json.loads(comparison_path.read_text())
     details = (
@@ -95,9 +103,11 @@ def _run_artifacts(root: Path, run_name: str | None) -> tuple[str, str | None, s
             f"- Pitch frames within 50 cents: "
             f"`{preservation['pitch_frames_within_50_cents']:.1%}`\n"
         )
+    source_name = comparison.get("source")
+    source = run / source_name if source_name else None
     prediction = run / comparison["prediction"]
     target = run / comparison["target"]
-    return details, str(prediction), str(target)
+    return details, str(source) if source else None, str(prediction), str(target)
 
 
 def build_dashboard(root: Path | None = None) -> gr.Blocks:
@@ -125,8 +135,9 @@ def build_dashboard(root: Path | None = None) -> gr.Blocks:
             refresh = gr.Button("Refresh")
         details = gr.Markdown()
         with gr.Row():
+            source = gr.Audio(label="Input audio", interactive=False)
             prediction = gr.Audio(label="Model output", interactive=False)
-            target = gr.Audio(label="Held-out target", interactive=False)
+            target = gr.Audio(label="Target reference", interactive=False)
 
         def refresh_state() -> tuple[str, list[list[Any]], gr.Dropdown]:
             refreshed_rows, refreshed_names = _scan_runs(root)
@@ -141,11 +152,11 @@ def build_dashboard(root: Path | None = None) -> gr.Blocks:
         selected.change(
             lambda name: _run_artifacts(root, name),
             inputs=selected,
-            outputs=[details, prediction, target],
+            outputs=[details, source, prediction, target],
         )
         app.load(
             lambda: _run_artifacts(root, initial),
-            outputs=[details, prediction, target],
+            outputs=[details, source, prediction, target],
         )
     return app
 

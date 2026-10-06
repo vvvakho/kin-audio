@@ -11,17 +11,19 @@ Kin Audio is deliberately not a text-to-song generator. Its central question is 
 
 ## Status
 
-Early research. The repository currently contains a complete monophonic baseline:
+Early research. The primary path is now a paired audio-to-audio model that accepts both chords and
+monophonic phrases:
 
-- deterministic pitch, loudness, and voicing extraction;
-- a compact DDSP-style harmonic renderer;
-- a license-clean paired smoke-corpus generator;
-- reproducible training, inference, and structural evaluation commands;
+- a complex-spectrogram U-Net baseline that preserves the complete source spectrum;
+- aligned mono and polyphonic smoke-corpus generation;
+- a monophonic DDSP renderer retained as an inspectable control, not the release target;
+- reproducible training, inference, structural evaluation, and mobile listening tools;
 - a read-only experiment dashboard.
 
-The synthetic corpus validates the pipeline; it is not evidence of real-recording quality. The next
-benchmark is openly licensed real audio, beginning with StarNet. The first intended musical model is
-monophonic voice/guitar/synth to a learned choir-like body.
+The synthetic corpora validate the pipelines; they are not evidence of real-recording quality. The
+next benchmark is openly licensed paired audio from StarNet. The intended musical model is
+polyphonic from the beginning, with monophonic performances included in the same training
+distribution.
 
 ## Research contract
 
@@ -41,19 +43,17 @@ Prerequisites: `mise` or Python 3.11–3.13.
 ```bash
 mise install
 mise exec -- uv sync --extra cpu --extra dev
-mise exec -- uv run kin-audio generate-smoke --output data/smoke --examples 48
-mise exec -- uv run kin-audio train \
-  --manifest data/smoke/manifest.jsonl \
-  --output runs/smoke-v1 \
+mise exec -- uv run kin-audio generate-polyphonic-smoke \
+  --output data/polyphonic-smoke \
+  --examples 48
+mise exec -- uv run kin-audio train-polyphonic \
+  --manifest data/polyphonic-smoke/manifest.jsonl \
+  --output runs/polyphonic-smoke-v1 \
   --epochs 8
-mise exec -- uv run kin-audio infer \
-  --checkpoint runs/smoke-v1/checkpoint.pt \
-  --input data/smoke/00000/source.wav \
-  --output runs/smoke-v1/source_render.wav
-mise exec -- uv run kin-audio evaluate \
-  --source data/smoke/00000/source.wav \
-  --output runs/smoke-v1/source_render.wav \
-  --report runs/smoke-v1/preservation.json
+mise exec -- uv run kin-audio infer-polyphonic \
+  --checkpoint runs/polyphonic-smoke-v1/checkpoint.pt \
+  --input data/polyphonic-smoke/00000/source.wav \
+  --output runs/polyphonic-smoke-v1/source_render.wav
 ```
 
 Choose exactly one accelerator extra: `cpu` for development and CI or `cu130` for CUDA 13 cloud
@@ -71,35 +71,39 @@ state or expose write operations.
 
 ## Model
 
-The baseline makes pitch preservation structural:
+The primary baseline keeps polyphonic information rather than reducing the source to one pitch
+track:
 
 ```text
-source audio
-    │
-    ├── fundamental frequency
-    ├── loudness
-    └── voicing
-            │
-            ▼
- recurrent harmonic-control network
-            │
-            ▼
- anti-aliased differentiable oscillator bank
-            │
-            ▼
- target-body audio
+source audio: melody, chord, or overlapping voices
+                    │
+                    ▼
+             complex STFT
+                    │
+                    ▼
+       residual spectral U-Net
+                    │
+                    ▼
+                inverse STFT
+                    │
+                    ▼
+             target-body audio
 ```
 
-The network predicts time-varying harmonic distributions and gain. It does not predict pitch. That
-constraint makes the model inspectable and provides a useful lower bound before less constrained
-codec or diffusion models are introduced.
+The network predicts a complex spectral residual and initially behaves as an identity transform.
+Paired source/target training teaches the timbre change. Mono and polyphonic inputs use the same
+architecture and objective.
+
+The explicit-pitch DDSP renderer remains a diagnostic lower bound. It is useful for proving pitch
+preservation and understanding failures, but it cannot represent chords and is no longer the main
+model direction.
 
 Current limitations are explicit:
 
-- monophonic pitched input only;
-- harmonic synthesis without a learned stochastic/noise branch;
-- dependency-light autocorrelation pitch extraction intended as a baseline;
-- no released musical checkpoint yet.
+- the polyphonic U-Net is a baseline before codec diffusion or flow matching;
+- training currently uses short 16 kHz segments;
+- objective polyphonic note/voicing evaluation still needs the real-data benchmark;
+- no musical checkpoint has been released.
 
 ## Data policy
 
