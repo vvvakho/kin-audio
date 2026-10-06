@@ -18,7 +18,7 @@ monophonic phrases:
 - aligned mono and polyphonic smoke-corpus generation;
 - a monophonic DDSP renderer retained as an inspectable control, not the release target;
 - reproducible training, inference, structural evaluation, and mobile listening tools;
-- a read-only experiment dashboard.
+- an experiment dashboard with mobile recording, upload, and listening controls.
 
 The synthetic corpora validate the pipelines; they are not evidence of real-recording quality. The
 next benchmark is openly licensed paired audio from StarNet. The intended musical model is
@@ -66,8 +66,9 @@ Launch the local dashboard:
 mise exec -- uv run kin-dashboard
 ```
 
-The dashboard reads `project.json` and completed runs under `runs/`. It does not mutate training
-state or expose write operations.
+The dashboard reads `project.json` and completed runs under `runs/`. It can record or upload up to
+15 seconds and render the performance through a polyphonic checkpoint. Prompt renders are temporary;
+the dashboard does not retrain models or mutate experiment state.
 
 ## Model
 
@@ -90,8 +91,12 @@ source audio: melody, chord, or overlapping voices
              target-body audio
 ```
 
-The network predicts a complex spectral residual and initially behaves as an identity transform.
-Paired source/target training teaches the timbre change. Mono and polyphonic inputs use the same
+The network predicts a complex spectral residual around the source. Its output projection is not
+zero-initialized: a zero residual blocked useful gradients from reaching the encoder and made the
+early smoke checkpoint behave almost exactly like an identity transform. An explicit
+frequency-position channel also lets the model learn absolute formant regions rather than
+incorrectly assuming that every spectral transformation is frequency-translation invariant. Paired
+source/target training teaches the timbre change. Mono and polyphonic inputs use the same
 architecture and objective.
 
 The explicit-pitch DDSP renderer remains a diagnostic lower bound. It is useful for proving pitch

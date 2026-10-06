@@ -61,6 +61,7 @@ class PairedAudioDataset(Dataset[dict[str, torch.Tensor]]):
         return {
             "source": _read_mono(self.root / str(record["source"]), sample_rate),
             "target": _read_mono(self.root / str(record["target"]), sample_rate),
+            "voices": torch.tensor(int(record.get("voices", 1))),
         }
 
 

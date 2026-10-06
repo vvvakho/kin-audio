@@ -11,6 +11,7 @@ class PolyphonicConfig:
     n_fft: int = 512
     hop_size: int = 128
     base_channels: int = 24
+    frequency_position: bool = True
 
 
 class _ConvBlock(nn.Module):
@@ -44,7 +45,8 @@ class PolyphonicSpectralUNet(nn.Module):
         super().__init__()
         self.config = config
         channels = config.base_channels
-        self.encoder_one = _ConvBlock(2, channels)
+        input_channels = 3 if config.frequency_position else 2
+        self.encoder_one = _ConvBlock(input_channels, channels)
         self.down_one = nn.Conv2d(channels, channels * 2, kernel_size=4, stride=2, padding=1)
         self.encoder_two = _ConvBlock(channels * 2, channels * 2)
         self.down_two = nn.Conv2d(channels * 2, channels * 4, kernel_size=4, stride=2, padding=1)
@@ -66,8 +68,6 @@ class PolyphonicSpectralUNet(nn.Module):
         )
         self.decoder_one = _ConvBlock(channels * 2, channels)
         self.output_projection = nn.Conv2d(channels, 2, kernel_size=1)
-        nn.init.zeros_(self.output_projection.weight)
-        nn.init.zeros_(self.output_projection.bias)
 
     def forward(self, source: Tensor) -> Tensor:
         if source.ndim != 2:
@@ -87,6 +87,21 @@ class PolyphonicSpectralUNet(nn.Module):
         components = torch.stack((spectrum.real, spectrum.imag), dim=1)
         scale = components.square().mean(dim=(1, 2, 3), keepdim=True).sqrt().clamp_min(1e-5)
         normalized = components / scale
+        if self.config.frequency_position:
+            frequency_position = torch.linspace(
+                -1.0,
+                1.0,
+                normalized.shape[-2],
+                device=source.device,
+                dtype=source.dtype,
+            ).view(1, 1, -1, 1)
+            normalized = torch.cat(
+                (
+                    normalized,
+                    frequency_position.expand(source.shape[0], -1, -1, normalized.shape[-1]),
+                ),
+                dim=1,
+            )
         padded, original_shape = _pad_to_multiple(normalized, multiple=4)
 
         first = self.encoder_one(padded)
@@ -117,7 +132,9 @@ class PolyphonicSpectralUNet(nn.Module):
 
     @classmethod
     def from_checkpoint(cls, checkpoint: dict[str, object]) -> "PolyphonicSpectralUNet":
-        model = cls(PolyphonicConfig(**checkpoint["config"]))
+        config_values = dict(checkpoint["config"])
+        config_values.setdefault("frequency_position", False)
+        model = cls(PolyphonicConfig(**config_values))
         model.load_state_dict(checkpoint["state_dict"])
         return model
 

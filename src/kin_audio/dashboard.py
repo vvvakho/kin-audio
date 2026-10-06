@@ -1,9 +1,14 @@
 import json
 import os
 from pathlib import Path
+from tempfile import gettempdir
 from typing import Any
+from uuid import uuid4
 
 import gradio as gr
+import soundfile as sf
+
+from .inference import render_polyphonic_file
 
 
 def _project_root() -> Path:
@@ -72,6 +77,38 @@ def _scan_runs(root: Path) -> tuple[list[list[Any]], list[str]]:
     return rows, names
 
 
+def _polyphonic_runs(root: Path) -> list[str]:
+    _, names = _scan_runs(root)
+    return [
+        name
+        for name in names
+        if json.loads((root / "runs" / name / "summary.json").read_text()).get(
+            "model_type"
+        )
+        == "polyphonic-spectral-unet"
+    ]
+
+
+def _render_prompt(
+    root: Path,
+    run_name: str | None,
+    input_path: str | None,
+) -> tuple[str | None, str]:
+    if run_name not in _polyphonic_runs(root):
+        return None, "Select a polyphonic checkpoint."
+    if not input_path:
+        return None, "Record or upload an input performance first."
+    duration = sf.info(input_path).duration
+    if duration > 15.0:
+        return None, f"Input is {duration:.1f}s; this research demo currently accepts up to 15s."
+    if duration <= 0.0:
+        return None, "The input audio is empty."
+    checkpoint = root / "runs" / run_name / "checkpoint.pt"
+    output = Path(gettempdir()) / f"kin-audio-{uuid4().hex}.wav"
+    render_polyphonic_file(checkpoint, input_path, output)
+    return str(output), f"Rendered {duration:.1f}s with `{run_name}`."
+
+
 def _run_artifacts(
     root: Path,
     run_name: str | None,
@@ -103,6 +140,11 @@ def _run_artifacts(
             f"- Pitch frames within 50 cents: "
             f"`{preservation['pitch_frames_within_50_cents']:.1%}`\n"
         )
+    content_type = comparison.get("content_type")
+    if content_type:
+        voices = comparison.get("voices")
+        voice_label = f", {voices} voices" if voices else ""
+        details += f"- Listening example: `{content_type}{voice_label}`\n"
     source_name = comparison.get("source")
     source = run / source_name if source_name else None
     prediction = run / comparison["prediction"]
@@ -139,16 +181,46 @@ def build_dashboard(root: Path | None = None) -> gr.Blocks:
             prediction = gr.Audio(label="Model output", interactive=False)
             target = gr.Audio(label="Target reference", interactive=False)
 
-        def refresh_state() -> tuple[str, list[list[Any]], gr.Dropdown]:
+        gr.Markdown(
+            "## Try the model\n"
+            "Record or upload up to 15 seconds. This is audio-conditioned transfer, not a "
+            "text-prompt model."
+        )
+        prompt_models = _polyphonic_runs(root)
+        prompt_model = gr.Dropdown(
+            choices=prompt_models,
+            value=prompt_models[0] if prompt_models else None,
+            label="Polyphonic checkpoint",
+        )
+        prompt_input = gr.Audio(
+            label="Your performance",
+            sources=["upload", "microphone"],
+            type="filepath",
+        )
+        prompt_button = gr.Button("Transform audio", variant="primary")
+        prompt_status = gr.Markdown()
+        prompt_output = gr.Audio(label="Your model output", interactive=False)
+
+        def refresh_state() -> tuple[
+            str,
+            list[list[Any]],
+            gr.Dropdown,
+            gr.Dropdown,
+        ]:
             refreshed_rows, refreshed_names = _scan_runs(root)
             value = refreshed_names[0] if refreshed_names else None
+            refreshed_prompt_models = _polyphonic_runs(root)
             return (
                 _project_markdown(root),
                 refreshed_rows,
                 gr.Dropdown(choices=refreshed_names, value=value),
+                gr.Dropdown(
+                    choices=refreshed_prompt_models,
+                    value=refreshed_prompt_models[0] if refreshed_prompt_models else None,
+                ),
             )
 
-        refresh.click(refresh_state, outputs=[project, runs, selected])
+        refresh.click(refresh_state, outputs=[project, runs, selected, prompt_model])
         selected.change(
             lambda name: _run_artifacts(root, name),
             inputs=selected,
@@ -157,6 +229,11 @@ def build_dashboard(root: Path | None = None) -> gr.Blocks:
         app.load(
             lambda: _run_artifacts(root, initial),
             outputs=[details, source, prediction, target],
+        )
+        prompt_button.click(
+            lambda run, audio: _render_prompt(root, run, audio),
+            inputs=[prompt_model, prompt_input],
+            outputs=[prompt_output, prompt_status],
         )
     return app
 

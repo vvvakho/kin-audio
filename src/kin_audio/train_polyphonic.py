@@ -141,8 +141,17 @@ def _render_validation_example(
     validation_set: Subset,
     device: torch.device,
     output: Path,
-) -> dict[str, str]:
-    item = validation_set[0]
+) -> dict[str, object]:
+    example_index = next(
+        (
+            index
+            for index in range(len(validation_set))
+            if int(validation_set[index]["voices"]) > 1
+        ),
+        0,
+    )
+    item = validation_set[example_index]
+    voices = int(item["voices"])
     with torch.no_grad():
         prediction = model(item["source"].unsqueeze(0).to(device))[0]
     source_path = output / "validation_source.wav"
@@ -151,8 +160,11 @@ def _render_validation_example(
     save_audio(source_path, item["source"].numpy(), model.config.sample_rate)
     save_audio(prediction_path, prediction.cpu().numpy(), model.config.sample_rate)
     save_audio(target_path, item["target"].numpy(), model.config.sample_rate)
+    content_type = "polyphonic" if voices > 1 else "monophonic"
     comparison = {
-        "name": "Held-out paired polyphonic transfer",
+        "name": f"Held-out paired {content_type} transfer",
+        "content_type": content_type,
+        "voices": voices,
         "source": source_path.name,
         "prediction": prediction_path.name,
         "target": target_path.name,

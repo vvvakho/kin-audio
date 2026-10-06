@@ -1,7 +1,10 @@
 import json
+from pathlib import Path
 
 import torch
 
+from kin_audio.audio import save_audio
+from kin_audio.dashboard import _render_prompt
 from kin_audio.data import PairedAudioDataset, generate_polyphonic_smoke_dataset
 from kin_audio.polyphonic import PolyphonicConfig, PolyphonicSpectralUNet
 
@@ -22,9 +25,11 @@ def test_polyphonic_renderer_accepts_chords_and_gradients() -> None:
 
     assert output.shape == source.shape
     assert torch.isfinite(output).all()
-    assert torch.allclose(output, source, atol=2e-5)
     output.square().mean().backward()
     assert model.output_projection.weight.grad is not None
+    encoder_gradient = model.encoder_one.layers[0].weight.grad
+    assert encoder_gradient is not None
+    assert torch.count_nonzero(encoder_gradient) > 0
 
 
 def test_polyphonic_smoke_corpus_contains_mono_and_chords(tmp_path) -> None:
@@ -36,3 +41,29 @@ def test_polyphonic_smoke_corpus_contains_mono_and_chords(tmp_path) -> None:
     assert metadata["polyphonic_examples"] == 6
     assert len(dataset) == 8
     assert dataset[0]["source"].shape == dataset[0]["target"].shape
+    assert int(dataset[0]["voices"]) == 1
+    assert int(dataset[1]["voices"]) > 1
+
+
+def test_dashboard_renders_uploaded_audio_with_polyphonic_checkpoint(tmp_path) -> None:
+    run = tmp_path / "runs" / "polyphonic"
+    run.mkdir(parents=True)
+    model = PolyphonicSpectralUNet(PolyphonicConfig(base_channels=8))
+    torch.save(model.checkpoint(), run / "checkpoint.pt")
+    (run / "summary.json").write_text(
+        json.dumps({"model_type": "polyphonic-spectral-unet"})
+    )
+    time = torch.arange(4_096) / model.config.sample_rate
+    chord = sum(
+        torch.sin(2.0 * torch.pi * frequency * time)
+        for frequency in (220.0, 277.18, 329.63)
+    ) / 6.0
+    input_path = tmp_path / "input.wav"
+    save_audio(input_path, chord.numpy(), model.config.sample_rate)
+
+    output_path, status = _render_prompt(tmp_path, "polyphonic", str(input_path))
+
+    assert output_path is not None
+    assert Path(output_path).exists()
+    assert "Rendered" in status
+    Path(output_path).unlink()
