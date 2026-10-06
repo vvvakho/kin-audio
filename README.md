@@ -36,6 +36,18 @@ Kin separates two tasks that are often conflated:
 Every release must state which contract it implements. Preservation claims require held-out metrics
 and public listening examples.
 
+## Product contract
+
+The intended interaction has three meaningful inputs:
+
+1. **Performance audio** supplies the notes, chords, timing, dynamics, and phrasing.
+2. **Body reference audio** demonstrates the instrument or texture that should perform it.
+3. **Transformation strength** moves continuously from the dry performance to the referenced body.
+
+The engine must not need separate monophonic and polyphonic modes. At strength zero it must return
+the dry input exactly. Named presets and future text guidance should resolve into the same
+target-body representation rather than create parallel generation paths.
+
 ## Quick start
 
 Prerequisites: `mise` or Python 3.11–3.13.
@@ -43,17 +55,19 @@ Prerequisites: `mise` or Python 3.11–3.13.
 ```bash
 mise install
 mise exec -- uv sync --extra cpu --extra dev
-mise exec -- uv run kin-audio generate-polyphonic-smoke \
-  --output data/polyphonic-smoke \
+mise exec -- uv run kin-audio generate-reference-smoke \
+  --output data/reference-smoke \
   --examples 48
-mise exec -- uv run kin-audio train-polyphonic \
-  --manifest data/polyphonic-smoke/manifest.jsonl \
-  --output runs/polyphonic-smoke-v1 \
+mise exec -- uv run kin-audio train-reference \
+  --manifest data/reference-smoke/manifest.jsonl \
+  --output runs/reference-smoke-v1 \
   --epochs 8
-mise exec -- uv run kin-audio infer-polyphonic \
-  --checkpoint runs/polyphonic-smoke-v1/checkpoint.pt \
-  --input data/polyphonic-smoke/00000/source.wav \
-  --output runs/polyphonic-smoke-v1/source_render.wav
+mise exec -- uv run kin-audio infer-reference \
+  --checkpoint runs/reference-smoke-v1/checkpoint.pt \
+  --input data/reference-smoke/00000/source.wav \
+  --reference data/reference-smoke/00001/target-warm_strings.wav \
+  --strength 0.8 \
+  --output runs/reference-smoke-v1/source_render.wav
 ```
 
 Choose exactly one accelerator extra: `cpu` for development and CI or `cu130` for CUDA 13 cloud
@@ -66,38 +80,35 @@ Launch the local dashboard:
 mise exec -- uv run kin-dashboard
 ```
 
-The dashboard reads `project.json` and completed runs under `runs/`. It can record or upload up to
-15 seconds and render the performance through a polyphonic checkpoint. Prompt renders are temporary;
-the dashboard does not retrain models or mutate experiment state.
+The dashboard reads `project.json` and completed runs under `runs/`. It accepts a performance plus
+a preset or uploaded body reference, and exposes a structural dry-to-target strength control.
+Inputs are limited to 15 seconds in this research surface. Prompt renders are temporary; the
+dashboard does not retrain models or mutate experiment state.
 
 ## Model
 
-The primary baseline keeps polyphonic information rather than reducing the source to one pitch
-track:
+The primary engine keeps polyphonic information and separates musical content from target-body
+guidance:
 
 ```text
-source audio: melody, chord, or overlapping voices
-                    │
-                    ▼
-             complex STFT
-                    │
-                    ▼
-       residual spectral U-Net
-                    │
-                    ▼
-                inverse STFT
-                    │
-                    ▼
-             target-body audio
+performance audio ──► complex STFT ──► residual spectral U-Net ──► output audio
+                                             ▲
+                                             │ FiLM conditioning
+body reference audio ──► style encoder ──────┘
+                                             ▲
+transformation strength ─────────────────────┘
 ```
 
-The network predicts a complex spectral residual around the source. Its output projection is not
-zero-initialized: a zero residual blocked useful gradients from reaching the encoder and made the
-early smoke checkpoint behave almost exactly like an identity transform. An explicit
-frequency-position channel also lets the model learn absolute formant regions rather than
-incorrectly assuming that every spectral transformation is frequency-translation invariant. Paired
-source/target training teaches the timbre change. Mono and polyphonic inputs use the same
-architecture and objective.
+The performance can contain a melody, chord, or overlapping voices. The independent reference
+recording demonstrates the desired instrument or texture without needing matching notes. Its
+smoothed spectral envelope is applied structurally, so the engine cannot silently ignore the body
+reference; a learned style encoder then conditions the U-Net bottleneck for refinement. Strength
+scales both paths and returns the input tensor exactly at zero.
+
+An explicit frequency-position channel lets the model learn absolute formant regions rather than
+incorrectly assuming that every spectral transformation is frequency-translation invariant.
+Source, reference, and target examples are split by paired performance group so no performance or
+its reference crosses the train/validation boundary.
 
 The explicit-pitch DDSP renderer remains a diagnostic lower bound. It is useful for proving pitch
 preservation and understanding failures, but it cannot represent chords and is no longer the main

@@ -1,11 +1,12 @@
 {
   "name": "Kin Audio",
   "mission": "Open, content-preserving neural audio re-instrumentation: the musician authors the performance; the model changes its body.",
-  "current_focus": "Train a paired polyphonic audio-to-audio baseline on leakage-safe StarNet splits; monophonic examples remain part of the same model's training distribution.",
+  "current_focus": "Train a reference-conditioned polyphonic engine: performance audio defines the content, reference audio defines the target body, and transformation strength is explicit.",
   "principles": [
     "Preservation claims require held-out measurements and listening examples.",
     "Code, data, and model weights carry independent explicit licenses.",
     "Training runs are reproducible from a pinned configuration and dataset version.",
+    "Every audible control must correspond to a trained or structural model dimension; no cosmetic style knobs.",
     "No proprietary sample library enters a public dataset or released model without permission."
   ],
   "milestones": [
@@ -25,9 +26,21 @@
       "evidence": "The main model path consumes source audio directly and must support chords, overlapping notes, and monophonic phrases without separate model families."
     },
     {
-      "name": "Target-body conditioning",
+      "name": "Reference-conditioned target body",
+      "status": "active",
+      "evidence": "A polyphonic smoke engine accepts an independent body reference plus exact dry-to-target strength; mobile inference is live."
+    },
+    {
+      "name": "Text guidance",
       "status": "queued",
-      "evidence": "After the paired baseline is credible, one model will condition on multiple target instruments and textures."
+      "evidence": "Text should resolve to the same target-body representation after reference conditioning works on real audio."
     }
-  ]
+  ],
+  "product_contract": {
+    "performance_input": "Audio containing the notes, chords, timing, dynamics, and phrasing to preserve.",
+    "body_reference": "Audio exemplifying the instrument or texture that should perform the input content.",
+    "transformation_strength": "A continuous dry-to-target control with exact dry behavior at zero.",
+    "output": "Audio preserving the performance while adopting the referenced body.",
+    "non_goal": "The re-instrumentation engine does not invent new notes or arrangements."
+  }
 }

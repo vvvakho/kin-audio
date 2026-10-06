@@ -8,6 +8,8 @@ from torch.utils.data import Dataset
 
 from .audio import save_audio
 
+REFERENCE_TARGET_BODIES = ("glass_choir", "warm_strings", "bright_brass")
+
 
 def _load_records(manifest: str | Path) -> tuple[Path, list[dict[str, object]]]:
     manifest_path = Path(manifest)
@@ -60,6 +62,26 @@ class PairedAudioDataset(Dataset[dict[str, torch.Tensor]]):
         sample_rate = int(record["sample_rate"])
         return {
             "source": _read_mono(self.root / str(record["source"]), sample_rate),
+            "target": _read_mono(self.root / str(record["target"]), sample_rate),
+            "voices": torch.tensor(int(record.get("voices", 1))),
+        }
+
+
+class ReferenceAudioDataset(Dataset[dict[str, torch.Tensor]]):
+    """Performance, body-reference, and target triples for conditioned transfer."""
+
+    def __init__(self, manifest: str | Path) -> None:
+        self.root, self.records = _load_records(manifest)
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        record = self.records[index]
+        sample_rate = int(record["sample_rate"])
+        return {
+            "source": _read_mono(self.root / str(record["source"]), sample_rate),
+            "reference": _read_mono(self.root / str(record["reference"]), sample_rate),
             "target": _read_mono(self.root / str(record["target"]), sample_rate),
             "voices": torch.tensor(int(record.get("voices", 1))),
         }
@@ -226,6 +248,106 @@ def generate_polyphonic_smoke_dataset(
     return manifest
 
 
+def generate_reference_smoke_dataset(
+    output_dir: str | Path,
+    *,
+    examples: int = 48,
+    sample_rate: int = 16_000,
+    hop_size: int = 160,
+    duration_seconds: float = 1.6,
+    seed: int = 20261006,
+) -> Path:
+    """Generate source, independent body-reference, and target triples."""
+    if examples < 2 or examples % 2:
+        raise ValueError("reference corpus needs an even number of at least two performances")
+    root = Path(output_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    frames = round(duration_seconds * sample_rate / hop_size)
+    sample_count = round(duration_seconds * sample_rate)
+    rng = np.random.default_rng(seed)
+    performances: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    voice_counts: list[int] = []
+
+    for index in range(examples):
+        voice_count = 1 if index % 4 == 0 else int(rng.integers(2, 5))
+        performances.append(
+            _chord_controls(rng, frames, sample_rate, hop_size, voice_count)
+        )
+        voice_counts.append(voice_count)
+
+    for index, (f0, loudness, voiced) in enumerate(performances):
+        item_dir = root / f"{index:05d}"
+        item_dir.mkdir(exist_ok=True)
+        np.savez_compressed(
+            item_dir / "controls.npz",
+            f0_hz=f0,
+            loudness=loudness,
+            voiced=voiced,
+        )
+        source = _render_polyphonic_body(
+            f0,
+            loudness,
+            voiced,
+            sample_count,
+            sample_rate,
+            body="pluck",
+        )
+        save_audio(item_dir / "source.wav", source, sample_rate)
+        for body in REFERENCE_TARGET_BODIES:
+            target = _render_polyphonic_body(
+                f0,
+                loudness,
+                voiced,
+                sample_count,
+                sample_rate,
+                body=body,
+            )
+            save_audio(item_dir / f"target-{body}.wav", target, sample_rate)
+
+    records: list[dict[str, object]] = []
+    for index in range(examples):
+        reference_index = index + 1 if index % 2 == 0 else index - 1
+        for body_index, body in enumerate(REFERENCE_TARGET_BODIES):
+            records.append(
+                {
+                    "id": f"reference-smoke-{index:05d}-{body}",
+                    "controls": f"{index:05d}/controls.npz",
+                    "source": f"{index:05d}/source.wav",
+                    "reference": f"{reference_index:05d}/target-{body}.wav",
+                    "target": f"{index:05d}/target-{body}.wav",
+                    "split_group": f"pair-{index // 2:05d}",
+                    "target_body": body,
+                    "target_body_id": body_index,
+                    "sample_rate": sample_rate,
+                    "license": "CC0-1.0",
+                    "generator": "kin-audio/reference-synthetic-v1",
+                    "content_type": (
+                        "monophonic" if voice_counts[index] == 1 else "polyphonic"
+                    ),
+                    "voices": voice_counts[index],
+                }
+            )
+
+    manifest = root / "manifest.jsonl"
+    manifest.write_text("".join(json.dumps(record, sort_keys=True) + "\n" for record in records))
+    metadata = {
+        "name": "kin-reference-smoke",
+        "purpose": "reference-conditioned pipeline validation only",
+        "performances": examples,
+        "records": len(records),
+        "target_bodies": list(REFERENCE_TARGET_BODIES),
+        "monophonic_performances": sum(voices == 1 for voices in voice_counts),
+        "polyphonic_performances": sum(voices > 1 for voices in voice_counts),
+        "sample_rate": sample_rate,
+        "hop_size": hop_size,
+        "duration_seconds": duration_seconds,
+        "seed": seed,
+        "license": "CC0-1.0",
+    }
+    (root / "dataset.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    return manifest
+
+
 def _chord_controls(
     rng: np.random.Generator,
     frames: int,
@@ -353,6 +475,14 @@ def _render_body(
         formant_b = 0.7 * np.exp(-0.5 * ((frequencies - 1450.0) / 420.0) ** 2)
         shimmer = 0.13 / np.sqrt(numbers[None, :])
         weights = formant_a + formant_b + shimmer
+    elif body == "warm_strings":
+        tilt = 1.0 / numbers[None, :] ** 1.55
+        body_resonance = 0.8 * np.exp(-0.5 * ((frequencies - 520.0) / 310.0) ** 2)
+        weights = tilt + body_resonance
+    elif body == "bright_brass":
+        tilt = 1.0 / numbers[None, :] ** 0.72
+        bell = 1.1 * np.exp(-0.5 * ((frequencies - 1250.0) / 650.0) ** 2)
+        weights = tilt + bell
     else:
         raise ValueError(f"unknown body: {body}")
 

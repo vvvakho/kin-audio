@@ -8,7 +8,7 @@ from uuid import uuid4
 import gradio as gr
 import soundfile as sf
 
-from .inference import render_polyphonic_file
+from .inference import render_reference_file
 
 
 def _project_root() -> Path:
@@ -77,7 +77,7 @@ def _scan_runs(root: Path) -> tuple[list[list[Any]], list[str]]:
     return rows, names
 
 
-def _polyphonic_runs(root: Path) -> list[str]:
+def _reference_runs(root: Path) -> list[str]:
     _, names = _scan_runs(root)
     return [
         name
@@ -85,41 +85,85 @@ def _polyphonic_runs(root: Path) -> list[str]:
         if json.loads((root / "runs" / name / "summary.json").read_text()).get(
             "model_type"
         )
-        == "polyphonic-spectral-unet"
+        == "reference-conditioned-spectral-unet"
     ]
+
+
+def _reference_presets(root: Path, run_name: str | None) -> dict[str, str]:
+    if run_name not in _reference_runs(root):
+        return {}
+    run = root / "runs" / run_name
+    summary = json.loads((run / "summary.json").read_text())
+    return {
+        str(body): str(run / filename)
+        for body, filename in summary.get("reference_presets", {}).items()
+    }
+
+
+def _preset_audio(root: Path, run_name: str | None, body: str | None) -> str | None:
+    if not body:
+        return None
+    return _reference_presets(root, run_name).get(body)
+
+
+def _prompt_model_state(
+    root: Path,
+    run_name: str | None,
+) -> tuple[gr.Dropdown, str | None]:
+    presets = _reference_presets(root, run_name)
+    bodies = list(presets)
+    selected = bodies[0] if bodies else None
+    return (
+        gr.Dropdown(choices=bodies, value=selected),
+        presets.get(selected) if selected else None,
+    )
 
 
 def _render_prompt(
     root: Path,
     run_name: str | None,
     input_path: str | None,
+    reference_path: str | None,
+    strength: float,
 ) -> tuple[str | None, str]:
-    if run_name not in _polyphonic_runs(root):
-        return None, "Select a polyphonic checkpoint."
+    if run_name not in _reference_runs(root):
+        return None, "Select a reference-conditioned checkpoint."
     if not input_path:
         return None, "Record or upload an input performance first."
+    if not reference_path:
+        return None, "Choose a preset or upload target-body reference audio."
     duration = sf.info(input_path).duration
-    if duration > 15.0:
-        return None, f"Input is {duration:.1f}s; this research demo currently accepts up to 15s."
-    if duration <= 0.0:
-        return None, "The input audio is empty."
+    reference_duration = sf.info(reference_path).duration
+    if duration > 15.0 or reference_duration > 15.0:
+        return None, "Performance and body reference must each be no longer than 15 seconds."
+    if duration <= 0.0 or reference_duration <= 0.0:
+        return None, "Performance and body reference must both contain audio."
     checkpoint = root / "runs" / run_name / "checkpoint.pt"
     output = Path(gettempdir()) / f"kin-audio-{uuid4().hex}.wav"
-    render_polyphonic_file(checkpoint, input_path, output)
-    return str(output), f"Rendered {duration:.1f}s with `{run_name}`."
+    render_reference_file(
+        checkpoint,
+        input_path,
+        reference_path,
+        output,
+        strength=strength,
+    )
+    return (
+        str(output),
+        f"Rendered {duration:.1f}s toward the reference at {strength:.0%} strength.",
+    )
 
 
 def _run_artifacts(
     root: Path,
     run_name: str | None,
-) -> tuple[str, str | None, str | None, str | None]:
+) -> tuple[str, str | None, str | None, str | None, str | None]:
     if not run_name:
-        return "No completed run selected.", None, None, None
+        return "No completed run selected.", None, None, None, None
     run = root / "runs" / run_name
     summary_path = run / "summary.json"
     comparison_path = run / "comparison.json"
     if not summary_path.exists() or not comparison_path.exists():
-        return "The selected run has no complete listening artifact.", None, None, None
+        return "The selected run has no complete listening artifact.", None, None, None, None
     summary = json.loads(summary_path.read_text())
     comparison = json.loads(comparison_path.read_text())
     details = (
@@ -145,11 +189,22 @@ def _run_artifacts(
         voices = comparison.get("voices")
         voice_label = f", {voices} voices" if voices else ""
         details += f"- Listening example: `{content_type}{voice_label}`\n"
+    target_body = comparison.get("target_body")
+    if target_body:
+        details += f"- Target body: `{target_body}`\n"
     source_name = comparison.get("source")
+    reference_name = comparison.get("reference")
     source = run / source_name if source_name else None
+    reference = run / reference_name if reference_name else None
     prediction = run / comparison["prediction"]
     target = run / comparison["target"]
-    return details, str(source) if source else None, str(prediction), str(target)
+    return (
+        details,
+        str(source) if source else None,
+        str(reference) if reference else None,
+        str(prediction),
+        str(target),
+    )
 
 
 def build_dashboard(root: Path | None = None) -> gr.Blocks:
@@ -177,25 +232,48 @@ def build_dashboard(root: Path | None = None) -> gr.Blocks:
             refresh = gr.Button("Refresh")
         details = gr.Markdown()
         with gr.Row():
-            source = gr.Audio(label="Input audio", interactive=False)
+            source = gr.Audio(label="Performance input", interactive=False)
+            reference = gr.Audio(label="Body reference", interactive=False)
             prediction = gr.Audio(label="Model output", interactive=False)
             target = gr.Audio(label="Target reference", interactive=False)
 
         gr.Markdown(
-            "## Try the model\n"
-            "Record or upload up to 15 seconds. This is audio-conditioned transfer, not a "
-            "text-prompt model."
+            "## Shape your performance\n"
+            "Your performance supplies the music. A preset or uploaded body reference supplies "
+            "the target sound. Strength controls how far the model moves from dry input."
         )
-        prompt_models = _polyphonic_runs(root)
+        prompt_models = _reference_runs(root)
+        initial_prompt_model = prompt_models[0] if prompt_models else None
+        initial_presets = _reference_presets(root, initial_prompt_model)
+        initial_bodies = list(initial_presets)
+        initial_body = initial_bodies[0] if initial_bodies else None
         prompt_model = gr.Dropdown(
             choices=prompt_models,
-            value=prompt_models[0] if prompt_models else None,
-            label="Polyphonic checkpoint",
+            value=initial_prompt_model,
+            label="Engine checkpoint",
+        )
+        prompt_preset = gr.Dropdown(
+            choices=initial_bodies,
+            value=initial_body,
+            label="Target-body preset",
+        )
+        prompt_reference = gr.Audio(
+            value=initial_presets.get(initial_body) if initial_body else None,
+            label="Target-body reference",
+            sources=["upload", "microphone"],
+            type="filepath",
         )
         prompt_input = gr.Audio(
             label="Your performance",
             sources=["upload", "microphone"],
             type="filepath",
+        )
+        prompt_strength = gr.Slider(
+            minimum=0.0,
+            maximum=1.0,
+            value=1.0,
+            step=0.05,
+            label="Transformation strength",
         )
         prompt_button = gr.Button("Transform audio", variant="primary")
         prompt_status = gr.Markdown()
@@ -209,7 +287,7 @@ def build_dashboard(root: Path | None = None) -> gr.Blocks:
         ]:
             refreshed_rows, refreshed_names = _scan_runs(root)
             value = refreshed_names[0] if refreshed_names else None
-            refreshed_prompt_models = _polyphonic_runs(root)
+            refreshed_prompt_models = _reference_runs(root)
             return (
                 _project_markdown(root),
                 refreshed_rows,
@@ -224,15 +302,31 @@ def build_dashboard(root: Path | None = None) -> gr.Blocks:
         selected.change(
             lambda name: _run_artifacts(root, name),
             inputs=selected,
-            outputs=[details, source, prediction, target],
+            outputs=[details, source, reference, prediction, target],
         )
         app.load(
             lambda: _run_artifacts(root, initial),
-            outputs=[details, source, prediction, target],
+            outputs=[details, source, reference, prediction, target],
+        )
+        prompt_model.change(
+            lambda run: _prompt_model_state(root, run),
+            inputs=prompt_model,
+            outputs=[prompt_preset, prompt_reference],
+        )
+        prompt_preset.change(
+            lambda run, body: _preset_audio(root, run, body),
+            inputs=[prompt_model, prompt_preset],
+            outputs=prompt_reference,
         )
         prompt_button.click(
-            lambda run, audio: _render_prompt(root, run, audio),
-            inputs=[prompt_model, prompt_input],
+            lambda run, audio, body_reference, strength: _render_prompt(
+                root,
+                run,
+                audio,
+                body_reference,
+                strength,
+            ),
+            inputs=[prompt_model, prompt_input, prompt_reference, prompt_strength],
             outputs=[prompt_output, prompt_status],
         )
     return app

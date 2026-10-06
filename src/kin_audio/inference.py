@@ -8,6 +8,7 @@ from .audio import load_audio, save_audio
 from .features import extract_performance
 from .model import HarmonicRenderer
 from .polyphonic import PolyphonicSpectralUNet
+from .reference import ReferenceConditionedUNet
 from .train import resolve_device
 
 
@@ -52,6 +53,31 @@ def render_polyphonic_file(
     audio = load_audio(input_path, model.config.sample_rate)
     with torch.no_grad():
         prediction = model(torch.from_numpy(audio).unsqueeze(0).to(device))[0]
+    output = Path(output_path)
+    save_audio(output, prediction.cpu().numpy(), model.config.sample_rate)
+    return output
+
+
+def render_reference_file(
+    checkpoint_path: str | Path,
+    input_path: str | Path,
+    reference_path: str | Path,
+    output_path: str | Path,
+    *,
+    strength: float = 1.0,
+    device_name: str = "auto",
+) -> Path:
+    device = resolve_device(device_name)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    model = ReferenceConditionedUNet.from_checkpoint(checkpoint).to(device).eval()
+    source = load_audio(input_path, model.config.sample_rate)
+    reference = load_audio(reference_path, model.config.sample_rate)
+    with torch.no_grad():
+        prediction = model(
+            torch.from_numpy(source).unsqueeze(0).to(device),
+            torch.from_numpy(reference).unsqueeze(0).to(device),
+            torch.tensor([strength], device=device),
+        )[0]
     output = Path(output_path)
     save_audio(output, prediction.cpu().numpy(), model.config.sample_rate)
     return output
