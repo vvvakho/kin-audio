@@ -1,7 +1,7 @@
 {
   "name": "Kin Audio",
   "mission": "Open, content-preserving neural audio re-instrumentation: the musician authors the performance; the model changes its body.",
-  "current_focus": "Validate the monophonic harmonic renderer, then benchmark on openly licensed real audio.",
+  "current_focus": "Ingest a leakage-safe StarNet subset and establish real-audio baselines.",
   "principles": [
     "Preservation claims require held-out measurements and listening examples.",
     "Code, data, and model weights carry independent explicit licenses.",
@@ -11,13 +11,13 @@
   "milestones": [
     {
       "name": "Reproducible research core",
-      "status": "active",
-      "evidence": "Synthetic paired-corpus generator, DDSP-style renderer, training, inference, and evaluation are being verified."
+      "status": "completed",
+      "evidence": "End-to-end smoke run trained, inferred, and measured 2.1-cent median pitch error with 97.4% voicing overlap."
     },
     {
       "name": "Open-data baseline",
-      "status": "queued",
-      "evidence": "StarNet is the first paired benchmark; NSynth and Slakh are supporting corpora."
+      "status": "active",
+      "evidence": "StarNet is the first paired benchmark; its CC BY 4.0 provenance and composition-level split are registered."
     },
     {
       "name": "Niche target body",

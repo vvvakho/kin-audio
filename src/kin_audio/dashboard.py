@@ -84,6 +84,17 @@ def _run_artifacts(root: Path, run_name: str | None) -> tuple[str, str | None, s
         f"- Device: `{summary['device']}`\n"
         f"- Training time: `{summary['duration_seconds']:.1f}s`\n"
     )
+    preservation_path = run / "preservation.json"
+    if preservation_path.exists():
+        preservation = json.loads(preservation_path.read_text())
+        pitch_error = preservation["median_absolute_pitch_error_cents"]
+        pitch_error_label = "n/a" if pitch_error is None else f"{pitch_error:.1f} cents"
+        details += (
+            f"- Median pitch error: `{pitch_error_label}`\n"
+            f"- Voicing overlap: `{preservation['voicing_iou']:.1%}`\n"
+            f"- Pitch frames within 50 cents: "
+            f"`{preservation['pitch_frames_within_50_cents']:.1%}`\n"
+        )
     prediction = run / comparison["prediction"]
     target = run / comparison["target"]
     return details, str(prediction), str(target)
