@@ -1,0 +1,23 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.dist/
+dist/
+build/
+
+# Generated data, training runs, and audio artifacts
+data/
+runs/
+artifacts/audio/
+*.wav
+*.flac
+*.pt
+*.pth
+*.ckpt
+
+# Local secrets
+.env
+.env.*
+!.env.example

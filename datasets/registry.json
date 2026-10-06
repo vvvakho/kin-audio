@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "datasets": [
+    {
+      "id": "starnet-1.0",
+      "name": "StarNet",
+      "url": "https://doi.org/10.5281/zenodo.6917099",
+      "license": "CC-BY-4.0",
+      "download_bytes": 36465378501,
+      "role": "Primary paired re-instrumentation benchmark",
+      "content": "104 MIDI-derived classical pieces, two parts, four instruments, stems and paired mixtures",
+      "status": "approved"
+    },
+    {
+      "id": "nsynth",
+      "name": "NSynth",
+      "url": "https://magenta.withgoogle.com/datasets/nsynth",
+      "license": "CC-BY-4.0",
+      "examples": 305979,
+      "role": "Isolated-note target-body pretraining and evaluation",
+      "content": "Four-second monophonic notes from 1006 instruments with pitch, velocity, and timbre labels",
+      "status": "approved"
+    },
+    {
+      "id": "slakh2100-redux",
+      "name": "Slakh2100",
+      "url": "https://doi.org/10.5281/zenodo.4599666",
+      "license": "CC-BY-4.0",
+      "download_bytes": 104322767708,
+      "role": "Aligned MIDI, stem, and multi-instrument supporting corpus",
+      "content": "2100 tracks, 145 hours, 187 patches across 34 classes",
+      "status": "approved-with-split-review",
+      "warning": "Use redux splits and exclude omitted duplicate MIDI before reporting generalization."
+    }
+  ]
+}

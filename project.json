@@ -1,0 +1,33 @@
+{
+  "name": "Kin Audio",
+  "mission": "Open, content-preserving neural audio re-instrumentation: the musician authors the performance; the model changes its body.",
+  "current_focus": "Validate the monophonic harmonic renderer, then benchmark on openly licensed real audio.",
+  "principles": [
+    "Preservation claims require held-out measurements and listening examples.",
+    "Code, data, and model weights carry independent explicit licenses.",
+    "Training runs are reproducible from a pinned configuration and dataset version.",
+    "No proprietary sample library enters a public dataset or released model without permission."
+  ],
+  "milestones": [
+    {
+      "name": "Reproducible research core",
+      "status": "active",
+      "evidence": "Synthetic paired-corpus generator, DDSP-style renderer, training, inference, and evaluation are being verified."
+    },
+    {
+      "name": "Open-data baseline",
+      "status": "queued",
+      "evidence": "StarNet is the first paired benchmark; NSynth and Slakh are supporting corpora."
+    },
+    {
+      "name": "Niche target body",
+      "status": "queued",
+      "evidence": "First intended release is monophonic performance to a choir-like learned body."
+    },
+    {
+      "name": "Polyphonic transfer",
+      "status": "research",
+      "evidence": "Paired MIDI rendering and WaveTransfer provide the initial path."
+    }
+  ]
+}
